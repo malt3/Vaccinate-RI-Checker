@@ -12,7 +12,7 @@ INTERVAL = 30
 PUSHOVER_USER_KEY = ''
 PUSHOVER_API_KEY = ''
 
-LOGO = '''
+LOGO = r'''
                         _             __          ____  ____
  _   ______ ___________(_)___  ____ _/ /____     / __ \/  _/
 | | / / __ `/ ___/ ___/ / __ \/ __ `/ __/ _ \   / /_/ // /  
@@ -58,36 +58,37 @@ class SearchResultItem:
         self.clinic_id = clinic_id
 
     @classmethod
-    def fromHTML(cls, soup):
-        def parseStrongField(required_field_name, soup, as_list=False):
-            if soup.strong.text.strip() != required_field_name:
+    def from_html(cls, soup):
+        def parse_strong_field(required_field_name, soup_, as_list=False):
+            if soup_.strong.text.strip() != required_field_name:
                 raise ValueError(
                     f'SearchResultItem could not be parsed correctly: Expected field "{required_field_name}"'
-                    f', got field: "{soup.strong.text.strip()}"')
+                    f', got field: "{soup_.strong.text.strip()}"')
             if as_list:
-                return [x for x in [x.strip() for x in soup.strong.next_sibling.split('\n')] if len(x) != 0]
+                return [x for x in [x.strip() for x in soup_.strong.next_sibling.split('\n')] if len(x) != 0]
             else:
-                return soup.strong.next_sibling.strip()
+                return soup_.strong.next_sibling.strip()
 
         top_level_fields = soup.div.findAll('p', recursive=False)
         second_level_fields = top_level_fields[4].findAll('p', recursive=False)
 
         name = top_level_fields[0].text.strip()
         address = top_level_fields[1].text.strip()
-        vaccinations_offered = parseStrongField(cls.VACCINATIONS_OFFERED_FIELD_NAME, top_level_fields[2], as_list=True)
-        age_groups_served = parseStrongField(cls.AGE_GROUPS_SERVED_FIELD_NAME, top_level_fields[3])
-        services_offered = parseStrongField(cls.SERVICES_OFFERED_FIELD_NAME, second_level_fields[0], as_list=True)
-        additional_information = parseStrongField(cls.ADDITIONAL_INFORMATION_FIELD_NAME, second_level_fields[1])
-        clinic_hours = parseStrongField(cls.CLINIC_HOURS_FIELD_NAME, second_level_fields[2])
-        appointments_available = int(parseStrongField(cls.APPOINTMENTS_AVAILABLE_FIELD_NAME, second_level_fields[3]))
-        special_instructions = parseStrongField(cls.SPECIAL_INSTRUCTIONS_FIELD_NAME, top_level_fields[4].div)
+        vaccinations_offered = parse_strong_field(cls.VACCINATIONS_OFFERED_FIELD_NAME,
+                                                  top_level_fields[2], as_list=True)
+        age_groups_served = parse_strong_field(cls.AGE_GROUPS_SERVED_FIELD_NAME, top_level_fields[3])
+        services_offered = parse_strong_field(cls.SERVICES_OFFERED_FIELD_NAME, second_level_fields[0], as_list=True)
+        additional_information = parse_strong_field(cls.ADDITIONAL_INFORMATION_FIELD_NAME, second_level_fields[1])
+        clinic_hours = parse_strong_field(cls.CLINIC_HOURS_FIELD_NAME, second_level_fields[2])
+        appointments_available = int(parse_strong_field(cls.APPOINTMENTS_AVAILABLE_FIELD_NAME, second_level_fields[3]))
+        special_instructions = parse_strong_field(cls.SPECIAL_INSTRUCTIONS_FIELD_NAME, top_level_fields[4].div)
         clinic_id_link = top_level_fields[4].a
         try:
             clinic_id = clinic_id_link['href'].split('clinic_id=')[1]
         except TypeError:
             try:
                 clinic_id = soup.findChild('img')['src'].split('/')[-1].split('clinic')[1].split('.')[0]
-            except:
+            except (AttributeError, IndexError, TypeError):
                 clinic_id = '0'
         return SearchResultItem(name, address, vaccinations_offered, age_groups_served, services_offered,
                                 additional_information, clinic_hours, appointments_available, special_instructions,
@@ -102,7 +103,7 @@ class Timeslot:
         self.appointments = appointments
 
     @classmethod
-    def fromHTML(cls, soup):
+    def from_html(cls, soup):
         time_choice_input = soup.td.input
         unixtime = time_choice_input['value']
         available = not time_choice_input.has_attr('disabled')
@@ -114,7 +115,7 @@ class Timeslot:
                 appointments = 0
             else:
                 appointments = int(appointments_str)
-        except:
+        except (AttributeError, IndexError, TypeError):
             appointments = 0
         return Timeslot(timestr, unixtime, available, appointments)
 
@@ -123,7 +124,7 @@ class ClinicWithFreeTimeslots(SearchResultItem):
     timeslots = []
 
     @classmethod
-    def fromSearchResultItem(cls, search_result_item):
+    def from_search_result_item(cls, search_result_item):
         return ClinicWithFreeTimeslots(name=search_result_item.name, address=search_result_item.address,
                                        vaccinations_offered=search_result_item.vaccinations_offered,
                                        age_groups_served=search_result_item.age_groups_served,
@@ -142,11 +143,14 @@ class DifferentialVaccinationAppointmentChecker:
     @staticmethod
     def client_registration(clinic_id):
         FAILURE_REDIRECT_NO_APPOINTMENTS_AVAILABLE = \
-            'https://www.vaccinateri.org/errors?message=Clinic+does+not+have+any+appointment+slots+available.'
+            'https://www.vaccinateri.org/errors?' \
+            'message=Clinic+does+not+have+any+appointment+slots+available.'
         FAILURE_REDIRECT_CLINIC_DOES_NOT_EXIST = \
-            'https://www.vaccinateri.org/errors?message=Deadline+to+register+for+this+clinic+has+been+reached.+Please+check+other+clinics.'
+            'https://www.vaccinateri.org/errors?' \
+            'message=Deadline+to+register+for+this+clinic+has+been+reached.+Please+check+other+clinics.'
         FAILURE_REDIRECT_DEADLINE_REACHED = \
-            'https://www.vaccinateri.org/errors?message=Deadline+to+register+for+this+clinic+has+been+reached.+Please+check+other+clinics.'
+            'https://www.vaccinateri.org/errors?' \
+            'message=Deadline+to+register+for+this+clinic+has+been+reached.+Please+check+other+clinics.'
         payload = {
             'clinic_id': clinic_id
         }
@@ -171,7 +175,7 @@ class DifferentialVaccinationAppointmentChecker:
             appointments_table = soup.find(id='appointments-section').div.table
             appointment_trs = appointments_table.tbody.findAll('tr', recursive=False)
             for appointment_tr in appointment_trs:
-                timeslot = Timeslot.fromHTML(appointment_tr)
+                timeslot = Timeslot.from_html(appointment_tr)
                 if timeslot.available:
                     timeslots.append(timeslot)
         return timeslots
@@ -194,29 +198,30 @@ class DifferentialVaccinationAppointmentChecker:
         soup = BeautifulSoup(r.text, 'html.parser')
         search_results = soup.find('div', {'class': 'main-container'}).findChild('div', {
             'class': ['mt-24', 'border-t', 'border-gray-200']}).findChildren('div', {
-            'class': ['md:flex', 'justify-between', '-mx-2', 'md:mx-0', 'px-2', 'md:px-4', 'pt-4', 'pb-4', 'border-b',
-                      'border-gray-200']})
+                'class': ['md:flex', 'justify-between', '-mx-2', 'md:mx-0', 'px-2', 'md:px-4', 'pt-4', 'pb-4',
+                          'border-b', 'border-gray-200']})
         search_result_items = []
         for item in search_results:
-            search_result_items.append(SearchResultItem.fromHTML(item))
+            search_result_items.append(SearchResultItem.from_html(item))
         return search_result_items
 
     def update(self, callback):
         search_result_items = DifferentialVaccinationAppointmentChecker.clinic_search()
-        clinics_with_appointments_available_according_to_search = [item for item in search_result_items if
-                                                                   item.appointments_available > 0 and item.clinic_id != '0']
-        total_appointments_available_according_to_search = reduce(lambda x, y: x + y.appointments_available,
-                                                                  clinics_with_appointments_available_according_to_search,
-                                                                  0)
+        clinics_with_appointments_according_to_search = [item for item in search_result_items if
+                                                         item.appointments_available > 0 and item.clinic_id != '0']
+        total_appointments_according_to_search = reduce(lambda x, y: x + y.appointments_available,
+                                                        clinics_with_appointments_according_to_search,
+                                                        0)
         clinics_with_free_timeslots = []
-        if total_appointments_available_according_to_search > 0:
+        if total_appointments_according_to_search > 0:
             print(
-                f'Search says there are a total of {total_appointments_available_according_to_search} appointments available from {len(clinics_with_appointments_available_according_to_search)} different clinics')
-        for clinic_with_appointments_available in clinics_with_appointments_available_according_to_search:
+                f'Search says there are a total of {total_appointments_according_to_search} appointments '
+                f'available from {len(clinics_with_appointments_according_to_search)} different clinics')
+        for clinic_with_appointments_available in clinics_with_appointments_according_to_search:
             timeslots = DifferentialVaccinationAppointmentChecker.client_registration(
                 clinic_with_appointments_available.clinic_id)
             if len(timeslots) > 0:
-                clinic_with_free_timeslots = ClinicWithFreeTimeslots.fromSearchResultItem(
+                clinic_with_free_timeslots = ClinicWithFreeTimeslots.from_search_result_item(
                     clinic_with_appointments_available)
                 clinic_with_free_timeslots.timeslots.extend(timeslots)
                 clinics_with_free_timeslots.append(clinic_with_free_timeslots)
@@ -225,9 +230,12 @@ class DifferentialVaccinationAppointmentChecker:
         self.clinic_id_map = {}
         for clinic_with_free_timeslots in clinics_with_free_timeslots:
             self.clinic_id_map[clinic_with_free_timeslots.clinic_id] = clinic_with_free_timeslots
-            number_of_free_appointments = reduce(lambda x, y: x+y.appointments, clinic_with_free_timeslots.timeslots, 0)
+            number_of_free_appointments = reduce(lambda x, y: x + y.appointments, clinic_with_free_timeslots.timeslots,
+                                                 0)
             print(
-                f'Clinic {clinic_with_free_timeslots.name} id: {clinic_with_free_timeslots.clinic_id} offers the following free timeslots with a total of {number_of_free_appointments} appointments at {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic_with_free_timeslots.clinic_id}:')
+                f'Clinic {clinic_with_free_timeslots.name} id: {clinic_with_free_timeslots.clinic_id} offers the '
+                f'following free timeslots with a total of {number_of_free_appointments} appointments at '
+                f'{SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic_with_free_timeslots.clinic_id}:')
             for timeslot in clinic_with_free_timeslots.timeslots:
                 print(f'    {timeslot.timestr} with {timeslot.appointments} free appointments')
 
@@ -249,22 +257,24 @@ class DifferentialVaccinationAppointmentChecker:
                 callback(self.clinic_id_map[clinic_id], new_timeslots)
 
 
-def printCallback(clinic, timeslots):
+def print_callback(clinic, timeslots):
     print(
-        f'{len(timeslots)} new timeslots for {clinic.name} found: {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}')
+        f'{len(timeslots)} new timeslots for {clinic.name} found: '
+        f'{SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}')
 
 
-def pushoverCallback(clinic, timeslots):
+def pushover_callback(clinic, timeslots):
     try:
         number_of_free_appointments = reduce(lambda x, y: x + y.appointments, timeslots, 0)
-        r = requests.post("https://api.pushover.net/1/messages.json", data={
+        requests.post("https://api.pushover.net/1/messages.json", data={
             "token": PUSHOVER_API_KEY,
             "user": PUSHOVER_USER_KEY,
-            "message": f'{len(timeslots)} new timeslots with a total of {number_of_free_appointments} free appointments for {clinic.name} found: {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}',
+            "message": f'{len(timeslots)} new timeslots with a total of {number_of_free_appointments} free appointments'
+                       f' for {clinic.name} found: {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}',
             "url": f'{SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}',
         })
-    except:
-        pass
+    except Exception as e_:
+        print(f'Notification could not be sent: {e_}')
 
 
 if __name__ == '__main__':
@@ -272,19 +282,19 @@ if __name__ == '__main__':
     if len(sys.argv) >= 3:
         PUSHOVER_USER_KEY = sys.argv[1]
         PUSHOVER_API_KEY = sys.argv[2]
-        callback = pushoverCallback
+        cb = pushover_callback
         print("[*] Using pushover notifications")
     else:
-        print(
-            "Please supply pushover user and api keys as arguments to this script in order to allow pushover to notify you")
+        print("Please supply pushover user and api keys as arguments to this script "
+              "in order to allow pushover to notify you")
         print(f'Usage: {sys.argv[0]} PUSHOVER_USER_KEY PUSHOVER_API_KEY')
-        callback = printCallback
+        cb = print_callback
         print("[*] Not using pushover notifications")
     print(f'[*] Updating every {INTERVAL} seconds')
     checker = DifferentialVaccinationAppointmentChecker()
     while True:
         try:
-            checker.update(callback)
+            checker.update(cb)
         except Exception as e:
             print(f'Update failed: {e}')
         time.sleep(INTERVAL)
