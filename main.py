@@ -12,6 +12,28 @@ INTERVAL = 30
 PUSHOVER_USER_KEY = ''
 PUSHOVER_API_KEY = ''
 
+LOGO = '''
+                        _             __          ____  ____
+ _   ______ ___________(_)___  ____ _/ /____     / __ \/  _/
+| | / / __ `/ ___/ ___/ / __ \/ __ `/ __/ _ \   / /_/ // /  
+| |/ / /_/ / /__/ /__/ / / / / /_/ / /_/  __/  / _, _// /   
+|___/\__,_/\___/\___/_/_/ /_/\__,_/\__/\___/  /_/ |_/___/   
+                                                            
+                __              __            
+          _____/ /_  ___  _____/ /_____  _____
+         / ___/ __ \/ _ \/ ___/ //_/ _ \/ ___/
+        / /__/ / / /  __/ /__/ ,< /  __/ /    
+        \___/_/ /_/\___/\___/_/|_|\___/_/     
+                                      
+                                       |
+                 ,------------=--------|___________|
+-=============%%%|         |  |______|_|___________|
+                 | | | | | | ||| | | | |___________|
+                 `------------=--------|           |
+                                       |
+                                                                
+'''
+
 
 class SearchResultItem:
     VACCINATIONS_OFFERED_FIELD_NAME = 'Vaccinations offered:'
@@ -73,10 +95,11 @@ class SearchResultItem:
 
 
 class Timeslot:
-    def __init__(self, timestr, unixtime, available):
+    def __init__(self, timestr, unixtime, available, appointments):
         self.timestr = timestr
         self.unixtime = unixtime
         self.available = available
+        self.appointments = appointments
 
     @classmethod
     def fromHTML(cls, soup):
@@ -84,7 +107,16 @@ class Timeslot:
         unixtime = time_choice_input['value']
         available = not time_choice_input.has_attr('disabled')
         timestr = soup.span.text.strip()
-        return Timeslot(timestr, unixtime, available)
+        try:
+            appointments_paragraph = soup.findChildren('td')[1].p
+            appointments_str = appointments_paragraph.text.split('appointments available')[0].strip()
+            if appointments_str == 'No':
+                appointments = 0
+            else:
+                appointments = int(appointments_str)
+        except:
+            appointments = 0
+        return Timeslot(timestr, unixtime, available, appointments)
 
 
 class ClinicWithFreeTimeslots(SearchResultItem):
@@ -109,18 +141,23 @@ class DifferentialVaccinationAppointmentChecker:
 
     @staticmethod
     def client_registration(clinic_id):
+        FAILURE_REDIRECT_NO_APPOINTMENTS_AVAILABLE = \
+            'https://www.vaccinateri.org/errors?message=Clinic+does+not+have+any+appointment+slots+available.'
+        FAILURE_REDIRECT_CLINIC_DOES_NOT_EXIST = \
+            'https://www.vaccinateri.org/errors?message=Deadline+to+register+for+this+clinic+has+been+reached.+Please+check+other+clinics.'
+        FAILURE_REDIRECT_DEADLINE_REACHED = \
+            'https://www.vaccinateri.org/errors?message=Deadline+to+register+for+this+clinic+has+been+reached.+Please+check+other+clinics.'
         payload = {
             'clinic_id': clinic_id
         }
         timeslots = []
         r = requests.get(f'{SCHEME}{HOSTNAME}/client/registration', params=payload, allow_redirects=False)
         if r.status_code == 302:
-            if r.headers[
-                'location'] == 'https://www.vaccinateri.org/errors?message=Clinic+does+not+have+any+appointment+slots+available.':
+            if r.headers['location'] == FAILURE_REDIRECT_NO_APPOINTMENTS_AVAILABLE:
                 print(f'clinic_id {clinic_id} has no appointments available')
-            elif r.headers['location'] == 'https://www.vaccinateri.org/errors?message=Invalid+clinic':
+            elif r.headers['location'] == FAILURE_REDIRECT_CLINIC_DOES_NOT_EXIST:
                 print(f'clinic_id {clinic_id} does not exist')
-            elif r.headers['location'] == 'https://www.vaccinateri.org/errors?message=Deadline+to+register+for+this+clinic+has+been+reached.+Please+check+other+clinics.':
+            elif r.headers['location'] == FAILURE_REDIRECT_DEADLINE_REACHED:
                 print(f'clinic_id {clinic_id} registration deadline for date has been reached')
             else:
                 print(f'Unknown redirect to {r.headers["location"]}')
@@ -188,10 +225,11 @@ class DifferentialVaccinationAppointmentChecker:
         self.clinic_id_map = {}
         for clinic_with_free_timeslots in clinics_with_free_timeslots:
             self.clinic_id_map[clinic_with_free_timeslots.clinic_id] = clinic_with_free_timeslots
+            number_of_free_appointments = reduce(lambda x, y: x+y.appointments, clinic_with_free_timeslots.timeslots, 0)
             print(
-                f'Clinic {clinic_with_free_timeslots.name} id: {clinic_with_free_timeslots.clinic_id} offers the following free timeslots at {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic_with_free_timeslots.clinic_id}:')
+                f'Clinic {clinic_with_free_timeslots.name} id: {clinic_with_free_timeslots.clinic_id} offers the following free timeslots with a total of {number_of_free_appointments} appointments at {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic_with_free_timeslots.clinic_id}:')
             for timeslot in clinic_with_free_timeslots.timeslots:
-                print(f'    {timeslot.timestr}')
+                print(f'    {timeslot.timestr} with {timeslot.appointments} free appointments')
 
         for clinic_id in self.clinic_id_map.keys():
             new_timeslots = []
@@ -218,10 +256,11 @@ def printCallback(clinic, timeslots):
 
 def pushoverCallback(clinic, timeslots):
     try:
+        number_of_free_appointments = reduce(lambda x, y: x + y.appointments, timeslots, 0)
         r = requests.post("https://api.pushover.net/1/messages.json", data={
             "token": PUSHOVER_API_KEY,
             "user": PUSHOVER_USER_KEY,
-            "message": f'{len(timeslots)} new timeslots for {clinic.name} found: {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}',
+            "message": f'{len(timeslots)} new timeslots with a total of {number_of_free_appointments} free appointments for {clinic.name} found: {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}',
             "url": f'{SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}',
         })
     except:
@@ -229,15 +268,19 @@ def pushoverCallback(clinic, timeslots):
 
 
 if __name__ == '__main__':
+    print(LOGO)
     if len(sys.argv) >= 3:
         PUSHOVER_USER_KEY = sys.argv[1]
         PUSHOVER_API_KEY = sys.argv[2]
         callback = pushoverCallback
+        print("[*] Using pushover notifications")
     else:
         print(
             "Please supply pushover user and api keys as arguments to this script in order to allow pushover to notify you")
         print(f'Usage: {sys.argv[0]} PUSHOVER_USER_KEY PUSHOVER_API_KEY')
         callback = printCallback
+        print("[*] Not using pushover notifications")
+    print(f'[*] Updating every {INTERVAL} seconds')
     checker = DifferentialVaccinationAppointmentChecker()
     while True:
         try:
