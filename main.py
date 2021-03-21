@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 SCHEME = 'https://'
 HOSTNAME = 'www.vaccinateri.org'
-INTERVAL = 60
+INTERVAL = 30
 PUSHOVER_USER_KEY = ''
 PUSHOVER_API_KEY = ''
 
@@ -63,7 +63,10 @@ class SearchResultItem:
         try:
             clinic_id = clinic_id_link['href'].split('clinic_id=')[1]
         except TypeError:
-            clinic_id = '0'
+            try:
+                clinic_id = soup.findChild('img')['src'].split('/')[-1].split('clinic')[1].split('.')[0]
+            except:
+                clinic_id = '0'
         return SearchResultItem(name, address, vaccinations_offered, age_groups_served, services_offered,
                                 additional_information, clinic_hours, appointments_available, special_instructions,
                                 clinic_id)
@@ -83,12 +86,21 @@ class Timeslot:
         timestr = soup.span.text.strip()
         return Timeslot(timestr, unixtime, available)
 
+
 class ClinicWithFreeTimeslots(SearchResultItem):
     timeslots = []
 
     @classmethod
     def fromSearchResultItem(cls, search_result_item):
-        return ClinicWithFreeTimeslots(name=search_result_item.name, address=search_result_item.address, vaccinations_offered=search_result_item.vaccinations_offered, age_groups_served=search_result_item.age_groups_served, services_offered=search_result_item.services_offered, additional_information=search_result_item.additional_information, clinic_hours=search_result_item.clinic_hours, appointments_available=search_result_item.appointments_available, special_instructions=search_result_item.special_instructions, clinic_id=search_result_item.clinic_id)
+        return ClinicWithFreeTimeslots(name=search_result_item.name, address=search_result_item.address,
+                                       vaccinations_offered=search_result_item.vaccinations_offered,
+                                       age_groups_served=search_result_item.age_groups_served,
+                                       services_offered=search_result_item.services_offered,
+                                       additional_information=search_result_item.additional_information,
+                                       clinic_hours=search_result_item.clinic_hours,
+                                       appointments_available=search_result_item.appointments_available,
+                                       special_instructions=search_result_item.special_instructions,
+                                       clinic_id=search_result_item.clinic_id)
 
 
 class DifferentialVaccinationAppointmentChecker:
@@ -102,12 +114,20 @@ class DifferentialVaccinationAppointmentChecker:
         }
         timeslots = []
         r = requests.get(f'{SCHEME}{HOSTNAME}/client/registration', params=payload, allow_redirects=False)
-        if r.status_code == 302 and r.headers[
-            'location'] == 'https://www.vaccinateri.org/errors?message=Clinic+does+not+have+any+appointment+slots+available.':
-            print(f'clinic_id {clinic_id} has no appointments available')
+        if r.status_code == 302:
+            if r.headers[
+                'location'] == 'https://www.vaccinateri.org/errors?message=Clinic+does+not+have+any+appointment+slots+available.':
+                print(f'clinic_id {clinic_id} has no appointments available')
+            elif r.headers['location'] == 'https://www.vaccinateri.org/errors?message=Invalid+clinic':
+                print(f'clinic_id {clinic_id} does not exist')
+            elif r.headers['location'] == 'https://www.vaccinateri.org/errors?message=Deadline+to+register+for+this+clinic+has+been+reached.+Please+check+other+clinics.':
+                print(f'clinic_id {clinic_id} registration deadline for date has been reached')
+            else:
+                print(f'Unknown redirect to {r.headers["location"]}')
             return []
         elif r.status_code != 200:
             print(f'Client registration for clinic_id {clinic_id} returned unexpected status code: {r.status_code}')
+            print(f'{r.headers}')
             return []
         else:
             soup = BeautifulSoup(r.text, 'html.parser')
@@ -147,15 +167,17 @@ class DifferentialVaccinationAppointmentChecker:
     def update(self, callback):
         search_result_items = DifferentialVaccinationAppointmentChecker.clinic_search()
         clinics_with_appointments_available_according_to_search = [item for item in search_result_items if
-                                                                   item.appointments_available > 0]
+                                                                   item.appointments_available > 0 and item.clinic_id != '0']
         total_appointments_available_according_to_search = reduce(lambda x, y: x + y.appointments_available,
                                                                   clinics_with_appointments_available_according_to_search,
                                                                   0)
         clinics_with_free_timeslots = []
         if total_appointments_available_according_to_search > 0:
-            print(f'Search says there are a total of {total_appointments_available_according_to_search} appointments available from {len(clinics_with_appointments_available_according_to_search)} different clinics')
+            print(
+                f'Search says there are a total of {total_appointments_available_according_to_search} appointments available from {len(clinics_with_appointments_available_according_to_search)} different clinics')
         for clinic_with_appointments_available in clinics_with_appointments_available_according_to_search:
-            timeslots = DifferentialVaccinationAppointmentChecker.client_registration(clinic_with_appointments_available.clinic_id)
+            timeslots = DifferentialVaccinationAppointmentChecker.client_registration(
+                clinic_with_appointments_available.clinic_id)
             if len(timeslots) > 0:
                 clinic_with_free_timeslots = ClinicWithFreeTimeslots.fromSearchResultItem(
                     clinic_with_appointments_available)
@@ -190,7 +212,9 @@ class DifferentialVaccinationAppointmentChecker:
 
 
 def printCallback(clinic, timeslots):
-    print(f'{len(timeslots)} new timeslots for {clinic.name} found: {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}')
+    print(
+        f'{len(timeslots)} new timeslots for {clinic.name} found: {SCHEME}{HOSTNAME}/client/registration?clinic_id={clinic.clinic_id}')
+
 
 def pushoverCallback(clinic, timeslots):
     try:
@@ -203,13 +227,15 @@ def pushoverCallback(clinic, timeslots):
     except:
         pass
 
+
 if __name__ == '__main__':
     if len(sys.argv) >= 3:
         PUSHOVER_USER_KEY = sys.argv[1]
         PUSHOVER_API_KEY = sys.argv[2]
         callback = pushoverCallback
     else:
-        print("Please supply pushover user and api keys as arguments to this script in order to allow pushover to notify you")
+        print(
+            "Please supply pushover user and api keys as arguments to this script in order to allow pushover to notify you")
         print(f'Usage: {sys.argv[0]} PUSHOVER_USER_KEY PUSHOVER_API_KEY')
         callback = printCallback
     checker = DifferentialVaccinationAppointmentChecker()
@@ -219,4 +245,3 @@ if __name__ == '__main__':
         except Exception as e:
             print(f'Update failed: {e}')
         time.sleep(INTERVAL)
-
